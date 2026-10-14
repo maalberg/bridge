@@ -7,14 +7,14 @@ from pytorch_nndct.apis import torch_quantizer
 from util import normalize_test, read_file
 
 
-def main(model_moduledir, model_classname, data_nsample):
+def main(model_moduledir, model_classname, data_nsample, cls_nsample):
 
     model_modulename = 'model'
     model_filename = 'model.py'
-    dataset_classname = f'{model_classname}_dataset'
+    dataset_builder_classname = f'{model_classname}_dataset_builder'
     print(f"[note]: model is located in {model_moduledir}")
     print(f"[note]: testing quantized model {model_classname}")
-    print(f"[note]: dataset is {dataset_classname}")
+    print(f"[note]: dataset builder is {dataset_builder_classname}")
 
 
     # --!
@@ -27,7 +27,7 @@ def main(model_moduledir, model_classname, data_nsample):
     spec.loader.exec_module(model_module)
 
     model_class = getattr(model_module, model_classname)
-    dataset_class = getattr(model_module, dataset_classname)
+    dataset_builder_class = getattr(model_module, dataset_builder_classname)
 
 
 
@@ -69,13 +69,15 @@ def main(model_moduledir, model_classname, data_nsample):
 
     data = read_file(data_path, data_nsample)
     labels = read_file(labels_path, data_nsample)
-
-    data = normalize_test(data, data_mean, data_std)
-    labels = torch.squeeze(labels, -1)
     print(f'[note]: read data shape is {data.shape}')
     print(f'[note]: read labels shape is {labels.shape}')
 
-    dataset = dataset_class(data, labels)
+    data = normalize_test(data, data_mean, data_std)
+    labels = torch.squeeze(labels, -1)
+
+    dataset = (dataset_builder_class()
+        .add_labels(labels)
+        .build(data, cls_nsample))
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False)
     print(f'[note]: dataset item shape is {dataset[0][0].shape}')
     print(f'[note]: number of items in dataset is {len(dataset)}')
@@ -127,8 +129,8 @@ def main(model_moduledir, model_classname, data_nsample):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
-        print(f"[usage]: python3 {sys.argv[0]} <modeldir> <classname> <data_nsample>")
+    if len(sys.argv) != 5:
+        print(f"[usage]: python3 {sys.argv[0]} <modeldir> <classname> <data_nsample> <cls_nsample>")
     else:
-        main(sys.argv[1], sys.argv[2], int(sys.argv[3]))
+        main(sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]))
 
