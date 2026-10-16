@@ -7,7 +7,7 @@ from pytorch_nndct.apis import torch_quantizer
 from util import normalize_test, read_file
 
 
-def main(model_moduledir, model_classname, data_nsample, cls_nsample):
+def main(model_moduledir, model_classname):
 
     model_modulename = 'model'
     model_filename = 'model.py'
@@ -28,6 +28,8 @@ def main(model_moduledir, model_classname, data_nsample, cls_nsample):
 
     model_class = getattr(model_module, model_classname)
     dataset_builder_class = getattr(model_module, dataset_builder_classname)
+    data_params = getattr(model_module, 'data_params')
+    dataset_params = getattr(model_module, 'dataset_params')
 
 
 
@@ -67,8 +69,8 @@ def main(model_moduledir, model_classname, data_nsample, cls_nsample):
     data_path = os.path.join(model_moduledir, f'{model_classname}_data')
     labels_path = os.path.join(model_moduledir, f'{model_classname}_labels')
 
-    data = read_file(data_path, data_nsample)
-    labels = read_file(labels_path, data_nsample)
+    data = read_file(data_path, *data_params[model_classname])
+    labels = read_file(labels_path, *data_params[model_classname])
     print(f'[note]: read data shape is {data.shape}')
     print(f'[note]: read labels shape is {labels.shape}')
 
@@ -77,7 +79,7 @@ def main(model_moduledir, model_classname, data_nsample, cls_nsample):
 
     dataset = (dataset_builder_class()
         .add_labels(labels)
-        .build(data, cls_nsample))
+        .build(data, **dataset_params[model_classname]))
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False)
     print(f'[note]: dataset item shape is {dataset[0][0].shape}')
     print(f'[note]: number of items in dataset is {len(dataset)}')
@@ -129,8 +131,8 @@ def main(model_moduledir, model_classname, data_nsample, cls_nsample):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 5:
-        print(f"[usage]: python3 {sys.argv[0]} <modeldir> <classname> <data_nsample> <cls_nsample>")
+    if len(sys.argv) != 3:
+        print(f"[usage]: python3 {sys.argv[0]} <modeldir> <classname>")
     else:
-        main(sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]))
+        main(sys.argv[1], sys.argv[2])
 

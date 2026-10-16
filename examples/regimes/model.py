@@ -13,6 +13,18 @@ import torch
 regimes = namedtuple('regimes', 'nominal excursion')
 
 
+data_params = {
+    'encoder'    : [1280],
+    'classifier' : [1152],
+}
+
+
+dataset_params = {
+    'encoder'    : {'past_nsample': 64, 'future_nsample': 32},
+    'classifier' : {'past_nsample': 16, 'future_nsample': 0},
+}
+
+
 class encoder_dataset_with_labels(torch.utils.data.Dataset):
 
     def __init__(self, timeseries, labels, past_nsample=48, future_nsample=24):
@@ -382,11 +394,11 @@ class classifier_dataset_builder(dataset_builder):
     def build(self, data, past_nsample=48, future_nsample=24):
         if self.labels is not None:
             if self.negated:
-                return classifier_dataset_with_labels_and_negation(data, self.labels, past_nsample)
+                return classifier_dataset_with_labels_and_negation(data, self.labels, window_nsample=past_nsample)
             else:
-                return classifier_dataset_with_labels(data, self.labels, past_nsample)
+                return classifier_dataset_with_labels(data, self.labels, window_nsample=past_nsample)
         else:
-            return classifier_dataset_no_labels(data, past_nsample)
+            return classifier_dataset_no_labels(data, window_nsample=past_nsample)
 
 
 def make_signatures(z, y=None, window_nsample=16):

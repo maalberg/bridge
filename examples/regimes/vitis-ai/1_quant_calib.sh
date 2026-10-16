@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # --! there must be model class parameter
-if [ $# -lt 3 ]; then
-    echo "[usage]: $0 <model_classname> <data_nsample> <cls_nsample>"
+if [ $# -lt 1 ]; then
+    echo "[usage]: $0 <model_classname>"
     exit 1
 fi
 
