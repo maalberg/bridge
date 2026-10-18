@@ -11,9 +11,10 @@ def main(model_moduledir, model_classname):
 
     model_modulename = 'model'
     model_filename = 'model.py'
+    model_tester_classname = f'{model_classname}_tester'
     dataset_builder_classname = f'{model_classname}_dataset_builder'
     print(f"[note]: model is located in {model_moduledir}")
-    print(f"[note]: testing quantized model {model_classname}")
+    print(f"[note]: model tester is {model_tester_classname}")
     print(f"[note]: dataset builder is {dataset_builder_classname}")
 
 
@@ -27,6 +28,8 @@ def main(model_moduledir, model_classname):
     spec.loader.exec_module(model_module)
 
     model_class = getattr(model_module, model_classname)
+    model_tester_class = getattr(model_module, model_tester_classname)
+    model_params = getattr(model_module, 'model_params')
     dataset_builder_class = getattr(model_module, dataset_builder_classname)
     data_params = getattr(model_module, 'data_params')
     dataset_params = getattr(model_module, 'dataset_params')
@@ -42,6 +45,8 @@ def main(model_moduledir, model_classname):
     model = model_class()
     model.load_state_dict(torch.load(weights_path))
     model.eval()
+
+    model_tester = model_tester_class()
 
 
     # --!
@@ -69,8 +74,8 @@ def main(model_moduledir, model_classname):
     data_path = os.path.join(model_moduledir, f'{model_classname}_data')
     labels_path = os.path.join(model_moduledir, f'{model_classname}_labels')
 
-    data = read_file(data_path, *data_params[model_classname])
-    labels = read_file(labels_path, *data_params[model_classname])
+    data = read_file(data_path, data_params[model_classname]['data_nsample'])
+    labels = read_file(labels_path, data_params[model_classname]['labels_nsample'])
     print(f'[note]: read data shape is {data.shape}')
     print(f'[note]: read labels shape is {labels.shape}')
 
@@ -89,7 +94,14 @@ def main(model_moduledir, model_classname):
     # --!----------- create quantizer in test mode -----------!
     # --!
 
-    quantizeri_dummy = torch.unsqueeze(torch.transpose(dataset[0][0], -1, -2), 0)
+    # --! determine shape of model input
+    if model_params[model_classname]['input_flattened']:
+        quantizeri_dummy = torch.flatten(torch.unsqueeze(dataset[0][0], 0), start_dim=1)
+    else:
+        if model_params[model_classname]['input_transposed']:
+            quantizeri_dummy = torch.unsqueeze(torch.transpose(dataset[0][0], -1, -2), 0)
+        else:
+            quantizeri_dummy = torch.unsqueeze(dataset[0][0], 0)
     print(f'[note]: quantizer dummy input shape is {quantizeri_dummy.shape}')
 
     quantizer = torch_quantizer(
@@ -104,23 +116,9 @@ def main(model_moduledir, model_classname):
     # --!----------- test quantized model -----------!
     # --!
 
-    ncorrect = 0
-    quant_ncorrect = 0
+    print(f"[note]: testing quantized model {model_classname}...")
 
-    with torch.no_grad():
-        for x, y in dataloader:
-            x = torch.transpose(x, -1, -2)
-            o = model(x)
-            quant_o = quant_model(x)
-
-            ncorrect = ncorrect + model.test_output(o, y)
-            quant_ncorrect = quant_ncorrect + model.test_output(quant_o, y)
-
-        acc = ncorrect / len(dataset) * 100
-        quant_acc = quant_ncorrect / len(dataset) * 100
-
-        print(f'[note]: original model accuracy is {acc:.1f}%')
-        print(f'[note]: quantized model accuracy is {quant_acc:.1f}%')
+    model_tester(model, dataloader, quant_model)
 
 
     # --!

@@ -13,7 +13,6 @@ def main(model_moduledir, model_classname):
     model_filename = 'model.py'
     dataset_builder_classname = f'{model_classname}_dataset_builder'
     print(f"[note]: model is located in {model_moduledir}")
-    print(f"[note]: calibrating quantized model {model_classname}")
     print(f"[note]: dataset builder is {dataset_builder_classname}")
 
 
@@ -27,6 +26,7 @@ def main(model_moduledir, model_classname):
     spec.loader.exec_module(model_module)
 
     model_class = getattr(model_module, model_classname)
+    model_params = getattr(model_module, 'model_params')
     dataset_builder_class = getattr(model_module, dataset_builder_classname)
     data_params = getattr(model_module, 'data_params')
     dataset_params = getattr(model_module, 'dataset_params')
@@ -50,8 +50,8 @@ def main(model_moduledir, model_classname):
     data_path = os.path.join(model_moduledir, f'{model_classname}_data')
     labels_path = os.path.join(model_moduledir, f'{model_classname}_labels')
 
-    data = read_file(data_path, *data_params[model_classname])
-    labels = read_file(labels_path, *data_params[model_classname])
+    data = read_file(data_path, data_params[model_classname]['data_nsample'])
+    labels = read_file(labels_path, data_params[model_classname]['labels_nsample'])
 
     data, data_mean, data_std = normalize_calib(data)
     labels = torch.squeeze(labels, -1)
@@ -80,7 +80,14 @@ def main(model_moduledir, model_classname):
     # --!----------- create quantizer in calibration mode -----------!
     # --!
 
-    quantizeri_dummy = torch.unsqueeze(torch.transpose(dataset[0][0], -1, -2), 0)
+    # --! determine shape of model input
+    if model_params[model_classname]['input_flattened']:
+        quantizeri_dummy = torch.flatten(torch.unsqueeze(dataset[0][0], 0), start_dim=1)
+    else:
+        if model_params[model_classname]['input_transposed']:
+            quantizeri_dummy = torch.unsqueeze(torch.transpose(dataset[0][0], -1, -2), 0)
+        else:
+            quantizeri_dummy = torch.unsqueeze(dataset[0][0], 0)
     print(f'[note]: quantizer dummy input shape is {quantizeri_dummy.shape}')
 
     quantizer = torch_quantizer(
@@ -95,9 +102,19 @@ def main(model_moduledir, model_classname):
     # --!----------- exercise calibration mechanism -----------!
     # --!
 
+    print(f"[note]: calibrating quantized model {model_classname}...")
+
     with torch.no_grad():
-        for x, _ in dataloader:
-            quant_model(torch.transpose(x, -1, -2))
+        for x, *_ in dataloader:
+
+            # --! shape input
+            if model_params[model_classname]['input_flattened']:
+                x = torch.flatten(x, start_dim=1)
+            else:
+                if model_params[model_classname]['input_transposed']:
+                    x = torch.transpose(x, -1, -2)
+
+            quant_model(x)
 
 
     # --!

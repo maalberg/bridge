@@ -4,24 +4,27 @@
 
 from abc import abstractmethod
 from abc import ABC as interface
-from collections import namedtuple
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
-
-regimes = namedtuple('regimes', 'nominal excursion')
 
 
 data_params = {
-    'encoder'    : [1280],
-    'classifier' : [1152],
+    'encoder'    : {'data_nsample': 1280, 'labels_nsample': 1184},
+    'classifier' : {'data_nsample': 1152, 'labels_nsample': 1152},
 }
 
 
 dataset_params = {
     'encoder'    : {'past_nsample': 64, 'future_nsample': 32},
     'classifier' : {'past_nsample': 16, 'future_nsample': 0},
+}
+
+model_params = {
+    'encoder'    : {'input_transposed': False, 'input_flattened': True},
+    'classifier' : {'input_transposed': True,  'input_flattened': False},
 }
 
 
@@ -36,13 +39,22 @@ class encoder_dataset_with_labels(torch.utils.data.Dataset):
         self.labels = torch.as_tensor(labels)
         self.index = []
 
+        data_nsample = self.data.shape[1]
+        labels_nsample = self.labels.shape[1]
+        if data_nsample == labels_nsample:
+            label_index_corr = 0
+        elif labels_nsample < data_nsample:
+            label_index_corr = self.past_nsample
+        else:
+            raise RuntimeError()
+
         ntraj = self.data.shape[0]
         nsample = self.data.shape[1]
 
         for traj_id in range(ntraj):
             for center in range(past_nsample, nsample - future_nsample):
                 self.index.append(
-                    (traj_id, center, self.labels[traj_id, center]))
+                    (traj_id, center, self.labels[traj_id, center - label_index_corr]))
 
     def __len__(self):
         return len(self.index)
@@ -57,8 +69,7 @@ class encoder_dataset_with_labels(torch.utils.data.Dataset):
         future = x[center:center + self.future_nsample]
 
         return (
-            past, future,
-            traj_id, center, label)
+            past, label)
 
 
 class encoder_dataset_no_labels(torch.utils.data.Dataset):
@@ -90,14 +101,13 @@ class encoder_dataset_no_labels(torch.utils.data.Dataset):
         future = x[center:center+self.future_nsample]
 
         return (
-            past, future,
-            traj_id, center)
+            past,)
 
 
 class encoder(torch.nn.Module):
     """ Encodes future-consistent latent representation for subsequent regime classification. """
 
-    def __init__(self, window_nsample, window_ndim, latent_ndim):
+    def __init__(self, window_nsample=64, window_ndim=2, latent_ndim=3):
         super().__init__()
 
         self.net = torch.nn.Sequential(
@@ -232,12 +242,6 @@ class classifier(torch.nn.Module):
         x = self.features(x)
         x = torch.mean(x, dim=-1)
         return self.classifier(x)
-
-    def test_output(self, output, label):
-        o_exc = (output[:, 1] - output[:, 0]) > 0.0
-        o_exc = int(o_exc)
-        y_exc = int(label)
-        return o_exc == y_exc
 
 
 def compute_loss_slow(z, traj_id, center, temp_lag=1):
@@ -420,5 +424,77 @@ def make_signatures(z, y=None, window_nsample=16):
         if y is not None: labels.append(y[center])
 
     return np.stack(sigs), np.stack(labels) if y is not None else None
+
+
+class model_tester(interface):
+
+    @abstractmethod
+    def __call__(self, model, dataloader, quant_model):
+        pass
+
+
+class encoder_tester(model_tester):
+
+    def __call__(self, model, dataloader, quant_model):
+
+        all_cos_sims = []
+
+        with torch.no_grad():
+            for x, *_ in dataloader:
+
+                # --! shape input
+                if model_params['encoder']['input_flattened']:
+                    x = torch.flatten(x, start_dim=1)
+                else:
+                    if model_params['encoder']['input_transposed']:
+                        x = torch.transpose(x, -1, -2)
+
+                # --! call models
+                o = model(x)
+                quant_o = quant_model(x)
+                
+                cos = F.cosine_similarity(o, quant_o, dim=-1)
+                all_cos_sims.extend(cos.cpu().tolist())
+
+        cos_sims = np.array(all_cos_sims)
+        acc = cos_sims.mean() * 100
+        print(f'[note]: quantized model fidelity is {acc:.1f}%')
+
+
+class classifier_tester(model_tester):
+
+    def __call__(self, model, dataloader, quant_model):
+        ncorrect = 0
+        quant_ncorrect = 0
+
+        with torch.no_grad():
+            for x, y in dataloader:
+
+                # --! shape input
+                if model_params['classifier']['input_flattened']:
+                    x = torch.flatten(x, start_dim=1)
+                else:
+                    if model_params['classifier']['input_transposed']:
+                        x = torch.transpose(x, -1, -2)
+
+                # --! call models
+                o = model(x)
+                quant_o = quant_model(x)
+
+                # --! calculate correct outputs
+                ncorrect = ncorrect + self._test_output(o, y)
+                quant_ncorrect = quant_ncorrect + self._test_output(quant_o, y)
+
+        acc = ncorrect / len(dataloader.dataset) * 100
+        quant_acc = quant_ncorrect / len(dataloader.dataset) * 100
+
+        print(f'[note]: original model accuracy is {acc:.1f}%')
+        print(f'[note]: quantized model accuracy is {quant_acc:.1f}%')
+        
+    def _test_output(self, output, label):
+        o_exc = (output[:, 1] - output[:, 0]) > 0.0
+        o_exc = int(o_exc)
+        y_exc = int(label)
+        return o_exc == y_exc
 
 
