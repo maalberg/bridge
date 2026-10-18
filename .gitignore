@@ -4,4 +4,5 @@ __pycache__
 .ipynb_checkpoints
 
 examples/*/vitis-ai/quantize_result/
+examples/*/vitis-ai/compiled/
 examples/*/*_norms.csv
