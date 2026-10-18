@@ -12,7 +12,7 @@ import torch.nn.functional as F
 
 
 data_params = {
-    'encoder'    : {'data_nsample': 1280, 'labels_nsample': 1184},
+    'encoder'    : {'data_nsample': 1280, 'labels_nsample': 0   },
     'classifier' : {'data_nsample': 1152, 'labels_nsample': 1152},
 }
 

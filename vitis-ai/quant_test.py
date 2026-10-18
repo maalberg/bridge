@@ -71,20 +71,27 @@ def main(model_moduledir, model_classname):
     # --!----------- create data loader -----------!
     # --!
 
+    # --! read data
     data_path = os.path.join(model_moduledir, f'{model_classname}_data')
-    labels_path = os.path.join(model_moduledir, f'{model_classname}_labels')
-
     data = read_file(data_path, data_params[model_classname]['data_nsample'])
-    labels = read_file(labels_path, data_params[model_classname]['labels_nsample'])
-    print(f'[note]: read data shape is {data.shape}')
-    print(f'[note]: read labels shape is {labels.shape}')
-
     data = normalize_test(data, data_mean, data_std)
-    labels = torch.squeeze(labels, -1)
+    print(f'[note]: read data shape is {data.shape}')
 
-    dataset = (dataset_builder_class()
-        .add_labels(labels)
-        .build(data, **dataset_params[model_classname]))
+    # --! prepare dataset builder
+    dataset_builder = dataset_builder_class()
+
+    labels_path = os.path.join(model_moduledir, f'{model_classname}_labels')
+    if os.path.exists(labels_path + '.csv'):
+        labels = read_file(labels_path, data_params[model_classname]['labels_nsample'])
+        labels = torch.squeeze(labels, -1)
+        print(f'[note]: read labels shape is {labels.shape}')
+
+        dataset_builder = dataset_builder.add_labels(labels)
+    else:
+        print(f'[note]: no labels for model {model_classname}')
+
+    # --! build dataset
+    dataset = dataset_builder.build(data, **dataset_params[model_classname])
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False)
     print(f'[note]: dataset item shape is {dataset[0][0].shape}')
     print(f'[note]: number of items in dataset is {len(dataset)}')
