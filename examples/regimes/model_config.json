@@ -1,0 +1,7 @@
+{
+  "past_nsample": 64,
+  "cov_nsample": 16,
+  "cls_nsample": 16,
+  "window_ndim": 2,
+  "embed_ndim": 3
+}

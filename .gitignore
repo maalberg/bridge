@@ -1,8 +1,5 @@
+build/
 __pycache__
-
+*.pyc
 .DS_Store
-.ipynb_checkpoints
-
-examples/*/vitis-ai/quantize_result/
-examples/*/vitis-ai/compiled/
-examples/*/*_norms.csv
+__MACOSX/

@@ -1,113 +1,10 @@
-# --!                                            --!
-# --! encoding and classifying dynamical regimes --!
-# --!                                            --!
-
-from abc import abstractmethod
-from abc import ABC as interface
-
-import numpy as np
 import torch
-import torch.nn.functional as F
-
-
-
-data_params = {
-    'encoder'    : {'data_nsample': 1280, 'labels_nsample': 0   },
-    'classifier' : {'data_nsample': 1152, 'labels_nsample': 1152},
-}
-
-
-dataset_params = {
-    'encoder'    : {'past_nsample': 64, 'future_nsample': 32},
-    'classifier' : {'past_nsample': 16, 'future_nsample': 0},
-}
-
-model_params = {
-    'encoder'    : {'input_transposed': False, 'input_flattened': True},
-    'classifier' : {'input_transposed': True,  'input_flattened': False},
-}
-
-
-class encoder_dataset_with_labels(torch.utils.data.Dataset):
-
-    def __init__(self, timeseries, labels, past_nsample=48, future_nsample=24):
-
-        self.past_nsample = past_nsample
-        self.future_nsample = future_nsample
-
-        self.data = torch.as_tensor(timeseries)
-        self.labels = torch.as_tensor(labels)
-        self.index = []
-
-        data_nsample = self.data.shape[1]
-        labels_nsample = self.labels.shape[1]
-        if data_nsample == labels_nsample:
-            label_index_corr = 0
-        elif labels_nsample < data_nsample:
-            label_index_corr = self.past_nsample
-        else:
-            raise RuntimeError()
-
-        ntraj = self.data.shape[0]
-        nsample = self.data.shape[1]
-
-        for traj_id in range(ntraj):
-            for center in range(past_nsample, nsample - future_nsample):
-                self.index.append(
-                    (traj_id, center, self.labels[traj_id, center - label_index_corr]))
-
-    def __len__(self):
-        return len(self.index)
-
-    def __getitem__(self, idx):
-
-        traj_id, center, label = self.index[idx]
-
-        x = self.data[traj_id]
-
-        past = x[center - self.past_nsample:center]
-        future = x[center:center + self.future_nsample]
-
-        return (
-            past, label)
-
-
-class encoder_dataset_no_labels(torch.utils.data.Dataset):
-
-    def __init__(self, timeseries, past_nsample=48, future_nsample=24):
-
-        self.past_nsample = past_nsample
-        self.future_nsample = future_nsample
-
-        self.data = torch.as_tensor(timeseries)
-        self.index = []
-
-        ntraj = self.data.shape[0]
-        nsample = self.data.shape[1]
-
-        for traj_id in range(ntraj):
-            for center in range(past_nsample, nsample - future_nsample):
-                self.index.append((traj_id, center))
-
-    def __len__(self):
-        return len(self.index)
-
-    def __getitem__(self, idx):
-
-        traj_id, center = self.index[idx]
-        x = self.data[traj_id]
-
-        past = x[center-self.past_nsample:center]
-        future = x[center:center+self.future_nsample]
-
-        return (
-            past,)
-
+from collections import namedtuple
 
 class encoder(torch.nn.Module):
     """ Encodes future-consistent latent representation for subsequent regime classification. """
 
-    def __init__(self, window_nsample=64, window_ndim=2, latent_ndim=3):
+    def __init__(self, window_nsample, window_ndim, latent_ndim):
         super().__init__()
 
         self.net = torch.nn.Sequential(
@@ -121,95 +18,6 @@ class encoder(torch.nn.Module):
     def forward(self, x):
         return self.net(x)
 
-
-class classifier_dataset_with_labels(torch.utils.data.Dataset):
-
-    def __init__(self, signatures, labels, window_nsample=16):
-
-        self.data = torch.as_tensor(signatures, dtype=torch.float32)
-        self.labels = torch.as_tensor(labels, dtype=torch.long)
-        self.window_nsample = window_nsample
-
-        self.index = []
-        ntraj = self.data.shape[0]
-        nsample = self.data.shape[1]
-
-        for traj_id in range(ntraj):
-            for center in range(window_nsample, nsample - window_nsample):
-                self.index.append(
-                    (traj_id, center, self.labels[traj_id, center]))
-
-    def __len__(self):
-        return len(self.index)
-
-    def __getitem__(self, idx):
-
-        traj_id, center, label = self.index[idx]
-        window = self.data[traj_id, center-self.window_nsample:center+self.window_nsample]
-
-        return (window, label)
-
-
-class classifier_dataset_with_labels_and_negation(torch.utils.data.Dataset):
-
-    def __init__(self, signatures, labels, window_nsample=16):
-
-        self.data = torch.as_tensor(signatures, dtype=torch.float32)
-        self.labels = torch.as_tensor(labels, dtype=torch.long)
-        self.window_nsample = window_nsample
-
-        self.index = []
-        ntraj = self.data.shape[0]
-        nsample = self.data.shape[1]
-
-        for traj_id in range(ntraj):
-            for center in range(window_nsample, nsample - window_nsample):
-
-                negated = False
-                self.index.append(
-                    (traj_id, center, self.labels[traj_id, center], negated))
-
-                negated = True
-                self.index.append(
-                    (traj_id, center, self.labels[traj_id, center], negated))
-
-    def __len__(self):
-        return len(self.index)
-
-    def __getitem__(self, idx):
-
-        traj_id, center, label, negated = self.index[idx]
-        sign_factor = -1.0 if negated else 1.0
-        window = sign_factor * self.data[traj_id, center-self.window_nsample:center+self.window_nsample]
-
-        return (window, label)
-
-
-class classifier_dataset_no_labels(torch.utils.data.Dataset):
-
-    def __init__(self, signatures, window_nsample=16):
-
-        self.data = torch.as_tensor(signatures, dtype=torch.float32)
-        self.window_nsample = window_nsample
-
-        self.index = []
-        ntraj = self.data.shape[0]
-        nsample = self.data.shape[1]
-
-        for traj_id in range(ntraj):
-            for center in range(window_nsample, nsample - window_nsample):
-                self.index.append((traj_id, center))
-
-    def __len__(self):
-        return len(self.index)
-
-    def __getitem__(self, idx):
-
-        traj_id, center = self.index[idx]
-        window = self.data[traj_id, center-self.window_nsample:center+self.window_nsample]
-
-        return window
-        
 
 class classifier(torch.nn.Module):
     """ Classifies latent dynamical signatures to identify nominal and excursion regimes. """
@@ -244,257 +52,105 @@ class classifier(torch.nn.Module):
         return self.classifier(x)
 
 
-def compute_loss_slow(z, traj_id, center, temp_lag=1):
-    loss = 0.0
-    count = 0
+model_output = namedtuple('model_output', ['embed', 'sig', 'score'])
 
-    for traj in torch.unique(traj_id):
 
-        idx = (traj_id == traj)
-        z_traj = z[idx]
-        c_traj = center[idx]
+class model(torch.nn.Module):
 
-        order = torch.argsort(c_traj)
-        z_traj = z_traj[order]
-        dz = z_traj[temp_lag:] - z_traj[:-temp_lag]
+    def __init__(self, past_nsample, cov_nsample, cls_nsample, window_ndim, embed_ndim):
+        super().__init__()
 
-        loss += (dz**2).mean()
-        count += 1
+        self.encoder = encoder(past_nsample, window_ndim, embed_ndim)
+        self.classifier = classifier(embed_ndim)
 
-    return loss / max(count,1)
+        self.past_nsample = past_nsample
+        self.cov_nsample = cov_nsample
+        self.cls_nsample = cls_nsample
 
+        # --! standard normalization constants of signatures
+        #
+        # --! we register constants as buffers so that they are saved with model state
+        self.register_buffer('sig_mean', torch.zeros(embed_ndim, dtype=torch.float32))
+        self.register_buffer('sig_std', torch.ones(embed_ndim, dtype=torch.float32))
 
-def compute_loss_variance(z):
-    std = torch.sqrt(z.var(dim=0) + 1e-4)
-    return torch.mean(torch.relu(1.0 - std))
+        # --! standard normalization constants of input data
+        #
+        # --! we register constants as buffers so that they are saved with model state
+        self.register_buffer('in_mean', torch.zeros(window_ndim, dtype=torch.float32))
+        self.register_buffer('in_std', torch.ones(window_ndim, dtype=torch.float32))
 
+    def forward(self, past):
+        """
+        Runs model's forward pass.
 
-def train_encoder(model_past, model_future, dataloader, temp_lag=1, alpha=1e-1, beta=1e-2, nepoch=100, lr=1e-3):
-    """Trains past and future encoder models in parallel."""
+        Required parameters:
+            past    3d torch tensor with ``past`` windows of a trajectory shaped as [npast, past_nsample, nchan]
 
-    optimizer = torch.optim.Adam(list(model_past.parameters()) + list(model_future.parameters()), lr=lr)
-    mse_loss = torch.nn.MSELoss()
+        Returns:
+            score   2d torch tensor with classifier scores shaped as [nscore, 2]
+        """
 
-    print(f'[note]: training encoder models for {nepoch} epochs with {lr} learning rate')
+        # --! normalize input data
+        past = (past - self.in_mean) / self.in_std
 
-    for epoch in range(nepoch):
-        total_loss = 0.0
+        # --! encode past window into latent representation
+        z = self.encoder(torch.flatten(past, start_dim=-2))
 
-        # --! encoder training is unsupervised, i.e. there is no need for labels.
-        # --! yet certain systems have labels, and thus the data loader can
-        # --! return labels in the fifth element of the tuple. to account
-        # --! for the rest of the systems that do not have labels, it
-        # --! is important to explicitly ignore any element that
-        # --! comes after the first four.
-        for past, future, traj_id, center, *_ in dataloader:
+        # --! convert latent representation into normalized signatures
+        sig = self.make_windows(
+            z,
+            window_nsample=self.cov_nsample,
+            window_fun=lambda w: torch.linalg.eigvalsh(torch.cov(w.T)))
 
-            z = model_past(torch.flatten(past, start_dim=1))
-            h = model_future(torch.flatten(future, start_dim=1))
+        # --! normalize signatures
+        sig = (sig - self.sig_mean) / self.sig_std
 
-            loss_future = mse_loss(z, h)
-            loss_var_z = compute_loss_variance(z)
-            loss_var_h = compute_loss_variance(h)
+        # --! classify signatures based on their dynamical behavior
+        score = self.classifier(
+            torch.transpose(
+                self.make_windows(sig, window_nsample=self.cls_nsample), -1, -2))
 
-            loss_slow = compute_loss_slow(z[:, -1], traj_id, center, temp_lag=temp_lag)
+        return model_output(embed=z, sig=sig, score=score)
 
-            loss = (
-                loss_future
-                + beta * loss_var_z + beta * loss_var_h
-                + alpha * loss_slow
-            )
+    def make_windows(self, traj, window_nsample=16, window_fun=lambda w: w):
+        windows = []
+        nsample = traj.shape[0]
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+        for center in range(window_nsample, nsample - window_nsample):
+            window = traj[center-window_nsample:center+window_nsample]
+            windows.append(window_fun(window))
 
-            total_loss += loss.item()
+        return torch.stack(windows)
 
-        if epoch % 20 == 0:
-            print(f"\tepoch {epoch}, loss: {total_loss / len(dataloader):.6f}")
+    def make_inputs(self, trajectories):
+        """
+        Makes model inputs from given ``trajectories``.
+        The ``trajectories`` are split into past windows of size past_nsample in a sliding window fashion.
 
-    print("")
+        Required parameters:
+            trajectories    3d torch tensor with shape [ntraj, traj_nsample, nchan]
 
+        Returns:
+            inputs          4d torch tensor with shape [ntraj, npast, past_nsample, nchan]
+        """
+        return trajectories.unfold(1, self.past_nsample, 1).transpose(-1, -2)
 
-def train_classifier(model, dataloader, nepoch=100, lr=1e-3):
+    def align_labels(self, labels):
+        """
+        Aligns ``labels`` with classifier scores.
+        The number of ``labels`` is expected to match the number of trajectory samples.
+        The number of aligned labels will match the number of rows in the scores.
+        This method omits future window length when calculating the position of the last labeled sample in the trajectories.
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    criterion = torch.nn.CrossEntropyLoss()
+        Required parameters:
+            labels          2d torch tensor shaped as [ntraj, traj_nsample]
 
-    print(f'[note]: training classifier model for {nepoch} epochs with {lr} learning rate')
+        Returns:
+            aligned_labels  2d torch tensor shared as [ntraj, nscore]
+        """
 
-    for epoch in range(nepoch):
-        total_loss = 0.0
+        w, r = self.cov_nsample, self.cls_nsample
+        first = self.past_nsample + w + r
+        last = labels.shape[1] - w - r + 1
 
-        for x, y in dataloader:
-            x = torch.transpose(x, -1, -2)
-
-            optimizer.zero_grad()
-
-            logits = model(x)
-            loss = criterion(logits, y)
-
-            loss.backward()
-            optimizer.step()
-
-            total_loss += loss.item()
-
-        if epoch % 20 == 0:
-            print(f"\tepoch {epoch}, loss: {total_loss / len(dataloader):.6f}")
-
-    print("")
-
-
-class dataset_builder(interface):
-    """Builds a dataset following the Builder design pattern."""
-
-    @abstractmethod
-    def add_labels(self, labels):
-        pass
-
-    @abstractmethod
-    def set_negation(self, negated):
-        pass
-
-    @abstractmethod
-    def build(self, data, past_nsample=48, future_nsample=24):
-        pass
-
-
-class encoder_dataset_builder(dataset_builder):
-    """Builds an encoder dataset."""
-
-    def __init__(self):
-        self.labels = None
-
-    def add_labels(self, labels):
-        self.labels = labels
-        return self
-
-    def set_negation(self, negated):
-        raise NotImplementedError()
-
-    def build(self, data, past_nsample=48, future_nsample=24):
-        if self.labels is not None:
-            return encoder_dataset_with_labels(data, self.labels, past_nsample, future_nsample)
-        else:
-            return encoder_dataset_no_labels(data, past_nsample, future_nsample)
-
-
-class classifier_dataset_builder(dataset_builder):
-    """Builds a classifier dataset."""
-
-    def __init__(self):
-        self.labels = None
-        self.negated = False
-
-    def add_labels(self, labels):
-        self.labels = labels
-        return self
-
-    def set_negation(self, negated):
-        self.negated = negated
-        return self
-
-    def build(self, data, past_nsample=48, future_nsample=24):
-        if self.labels is not None:
-            if self.negated:
-                return classifier_dataset_with_labels_and_negation(data, self.labels, window_nsample=past_nsample)
-            else:
-                return classifier_dataset_with_labels(data, self.labels, window_nsample=past_nsample)
-        else:
-            return classifier_dataset_no_labels(data, window_nsample=past_nsample)
-
-
-def make_signatures(z, y=None, window_nsample=16):
-    """
-    Makes latent dynamical signatures out of future-consistent latent representation ``z`` and aligns result with labels ``y``.
-    The alignment is defined by half-window length ``window_nsample``.
-    """
-
-    nsample = len(z)
-    sigs = []
-    labels = []
-
-    for center in range(window_nsample, nsample - window_nsample):
-        window = z[center-window_nsample:center+window_nsample]
-        cov = np.cov(window.T)
-        eigvals = np.linalg.eigvalsh(cov)
-
-        sigs.append(eigvals)
-        if y is not None: labels.append(y[center])
-
-    return np.stack(sigs), np.stack(labels) if y is not None else None
-
-
-class model_tester(interface):
-
-    @abstractmethod
-    def __call__(self, model, dataloader, quant_model):
-        pass
-
-
-class encoder_tester(model_tester):
-
-    def __call__(self, model, dataloader, quant_model):
-
-        all_cos_sims = []
-
-        with torch.no_grad():
-            for x, *_ in dataloader:
-
-                # --! shape input
-                if model_params['encoder']['input_flattened']:
-                    x = torch.flatten(x, start_dim=1)
-                else:
-                    if model_params['encoder']['input_transposed']:
-                        x = torch.transpose(x, -1, -2)
-
-                # --! call models
-                o = model(x)
-                quant_o = quant_model(x)
-                
-                cos = F.cosine_similarity(o, quant_o, dim=-1)
-                all_cos_sims.extend(cos.cpu().tolist())
-
-        cos_sims = np.array(all_cos_sims)
-        acc = cos_sims.mean() * 100
-        print(f'[note]: quantized model fidelity is {acc:.1f}%')
-
-
-class classifier_tester(model_tester):
-
-    def __call__(self, model, dataloader, quant_model):
-        ncorrect = 0
-        quant_ncorrect = 0
-
-        with torch.no_grad():
-            for x, y in dataloader:
-
-                # --! shape input
-                if model_params['classifier']['input_flattened']:
-                    x = torch.flatten(x, start_dim=1)
-                else:
-                    if model_params['classifier']['input_transposed']:
-                        x = torch.transpose(x, -1, -2)
-
-                # --! call models
-                o = model(x)
-                quant_o = quant_model(x)
-
-                # --! calculate correct outputs
-                ncorrect = ncorrect + self._test_output(o, y)
-                quant_ncorrect = quant_ncorrect + self._test_output(quant_o, y)
-
-        acc = ncorrect / len(dataloader.dataset) * 100
-        quant_acc = quant_ncorrect / len(dataloader.dataset) * 100
-
-        print(f'[note]: original model accuracy is {acc:.1f}%')
-        print(f'[note]: quantized model accuracy is {quant_acc:.1f}%')
-        
-    def _test_output(self, output, label):
-        o_exc = (output[:, 1] - output[:, 0]) > 0.0
-        o_exc = int(o_exc)
-        y_exc = int(label)
-        return o_exc == y_exc
-
-
+        return labels[:, first:last]
